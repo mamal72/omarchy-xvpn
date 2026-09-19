@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v7
+
+      - name: Set Up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate Manifest
+        run: python -m json.tool manifest.json > /dev/null
+
+      - name: Run Model Tests
+        run: node tests/xvpn.test.js
+
+      - name: Validate Installer Syntax
+        run: bash -n bin/install-xvpn
+
+      - name: Lint Installer
+        run: shellcheck bin/install-xvpn
+
+  qml:
+    name: QML
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v7
+
+      - name: Install QML Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes qt6-declarative-dev-tools
+
+      - name: Validate QML
+        run: /usr/lib/qt6/bin/qmlformat Panel.qml > /dev/null
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, qml]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@v7
+
+      - name: Verify Version Tag
+        run: |
+          version="$(python -c 'import json; print(json.load(open("manifest.json"))["version"])')"
+          test "$GITHUB_REF_NAME" = "v$version"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "X-VPN $GITHUB_REF_NAME"

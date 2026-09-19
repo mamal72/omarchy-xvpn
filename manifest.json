@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "xvpn",
+  "name": "X-VPN",
+  "version": "1.0.0",
+  "author": "Mohamad Jahani",
+  "license": "MIT",
+  "description": "A native Omarchy bar controller for the X-VPN Linux CLI.",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Panel.qml" },
+  "barWidget": {
+    "displayName": "X-VPN",
+    "description": "Connect, disconnect, choose a location, and verify your public IP using the X-VPN CLI.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 10,
+      "installerSource": "https://app.xvpncdn.com/4dzfjmwrjw/cli_install.sh"
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec", "type": "integer", "label": "Refresh interval (seconds)",
+        "min": 5, "max": 300, "step": 5, "defaultValue": 10
+      },
+      {
+        "key": "installerSource", "type": "string", "label": "Installer source",
+        "defaultValue": "https://app.xvpncdn.com/4dzfjmwrjw/cli_install.sh",
+        "description": "The official installer URL, or an absolute local path/file:// URL to a reviewed script. Other remote URLs are rejected. Installation always opens in a terminal."
+      }
+    ]
+  }
+}
