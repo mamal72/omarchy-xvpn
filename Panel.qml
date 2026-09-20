@@ -487,7 +487,6 @@ Panel {
               label: "IP"
               value: !root.ipInfo.loaded ? "Loading…"
                 : (root.ipInfo.ok ? String(root.ipInfo.flag || "") + "  " + String(root.ipInfo.ip || "") : "Unavailable")
-              copyText: root.ipInfo.ok ? String(root.ipInfo.ip || "") : ""
             }
             PanelSeparator { width: parent.width; foreground: root.foreground }
             XvpnInfoRow {
@@ -768,7 +767,6 @@ Panel {
   component XvpnInfoRow: Item {
     property string label: ""
     property string value: ""
-    property string copyText: ""
     width: parent ? parent.width : 0
     height: Style.space(34)
 
@@ -787,12 +785,6 @@ Panel {
         color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body
         Layout.fillWidth: true; elide: Text.ElideRight
       }
-    }
-    MouseArea {
-      anchors.fill: parent
-      enabled: parent.copyText !== ""
-      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: Quickshell.execDetached(["wl-copy", parent.copyText])
     }
   }
 
