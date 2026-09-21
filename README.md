@@ -24,7 +24,7 @@ This is an independent community plugin. It is not affiliated with or endorsed b
 - Automatic public IP, location, network, and VPN details
 - Login, logout, and account status from the X-VPN CLI
 - Theme-aware connected-location highlighting and bar state
-- Guided installation from X-VPN's official script or a reviewed local copy
+- Official setup guide and CLI availability checks
 - IPC actions for shortcuts and automation
 
 Geo-list direct routing is intentionally out of scope for this release. Its planned boundary is documented in [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -32,7 +32,7 @@ Geo-list direct routing is intentionally out of scope for this release. Its plan
 ## 📋 Requirements
 
 - Omarchy with shell plugin support
-- `curl`
+- `curl`, `flock` (util-linux), and `xdg-open` (xdg-utils)
 - The X-VPN Linux CLI and a supported X-VPN account
 
 X-VPN's [Linux documentation](https://xvpn.io/download/vpn-linux) currently states that Linux CLI access requires Premium.
@@ -43,16 +43,9 @@ X-VPN's [Linux documentation](https://xvpn.io/download/vpn-linux) currently stat
 omarchy plugin add https://github.com/mamal72/omarchy-xvpn.git --enable
 ```
 
-If the CLI is unavailable, open the panel and select **Install X-VPN in Terminal**. The helper downloads only the official HTTPS installer, prints it for review, and asks for confirmation before running it. The vendor script may request `sudo` access.
+Install the X-VPN Linux CLI separately using the [official Linux CLI installation guide](https://xvpn.io/help-center/use-vpn-on-linux-with-command-line). CLI installation, updates, and repair are managed by the user, outside this plugin.
 
-To use a local installer instead, set `installerSource` in the plugin settings to an absolute path or `file://` URL:
-
-```text
-/home/you/Downloads/cli_install.sh
-file:///home/you/Downloads/cli_install.sh
-```
-
-Arbitrary remote installer URLs are rejected.
+If the CLI is unavailable, the panel offers **Open installation guide** and **Refresh**. After installing the CLI, select **Refresh** to load its status and connection controls. If its daemon is not running, the panel points to the same guide for setup help.
 
 ## 🔄 Update
 
@@ -82,6 +75,8 @@ omarchy plugin remove xvpn
 
 Every location row also exposes a **Connect** button on hover.
 
+Use the account menu to log in or log out. Both actions open an interactive terminal; complete any prompts there (type `yes` when X-VPN asks you to confirm logout). Account actions share the CLI lock with background queries, and account status refreshes automatically. Credentials stay in the X-VPN terminal flow.
+
 IPC examples:
 
 ```bash
@@ -90,13 +85,14 @@ omarchy-shell xvpn connect "United States"
 omarchy-shell xvpn disconnect
 omarchy-shell xvpn refresh
 omarchy-shell xvpn login
+omarchy-shell xvpn logout
 ```
 
 ## 🔒 Privacy and security
 
 When the panel opens or the connection changes, it requests public IP metadata from [`ipwho.is`](https://ipwho.is). This sends your public IP to that service; no X-VPN credentials are included. IP data is kept only in memory.
 
-Omarchy plugins run unsandboxed. Review this repository before enabling it. This plugin never stores account credentials, installs silently, or pipes a remote response directly into a shell. See [SECURITY.md](SECURITY.md) for reporting guidance.
+Omarchy plugins run unsandboxed. Review this repository before enabling it. This plugin never stores account credentials or downloads or executes installers. See [SECURITY.md](SECURITY.md) for reporting guidance.
 
 X-VPN and its logo are trademarks of their respective owner.
 
@@ -104,13 +100,12 @@ X-VPN and its logo are trademarks of their respective owner.
 
 ```bash
 node tests/xvpn.test.js
-bash -n bin/install-xvpn
 omarchy plugin validate .
 ```
 
 Keep CLI parsing side-effect free in `model/Xvpn.js`, and add fixtures whenever X-VPN output changes. See [ARCHITECTURE.md](ARCHITECTURE.md) for the component boundaries.
 
-GitHub Actions runs the model tests, validates the manifest and installer, lints the shell helper, and parses the QML entry point. Pushing a version tag such as `v1.0.0` publishes a GitHub release after every check passes; the tag must match the version in `manifest.json`.
+GitHub Actions runs the model tests, validates the manifest, and parses the QML entry point. Pushing a version tag such as `v1.0.2` publishes a GitHub release after every check passes; the tag must match the version in `manifest.json`.
 
 ## ☕ Support my work
 

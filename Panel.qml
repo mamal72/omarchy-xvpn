@@ -23,6 +23,7 @@ Panel {
   property string actionStatus: ""
   property string pendingLocationKey: ""
   property string lastError: ""
+  property string accountError: ""
   property var account: ({ loaded: false, loggedIn: false, account: "", subscription: "", status: "", message: "" })
   property int selectedIndex: 0
   readonly property var visibleRows: Xvpn.accordionRows(locations, expandedCountries, query)
@@ -41,10 +42,6 @@ Panel {
     : (lastError !== "" ? lastError
       : (connected && state.location !== "" ? state.location : "X-VPN Linux CLI"))
   readonly property string heroMeta: statusMeta + (state.protocol !== "" ? " · " + state.protocol : "")
-  readonly property string installerPath: {
-    var value = String(Qt.resolvedUrl("bin/install-xvpn"))
-    return decodeURIComponent(value.replace(/^file:\/\//, ""))
-  }
 
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
@@ -58,11 +55,11 @@ Panel {
     if ((force === true || protocols.length === 0) && installed && state.daemonRunning && !protocolsProcess.running)
       protocolsProcess.running = true
     if (force === true && !ipInfoProcess.running) ipInfoProcess.running = true
-    if (installed && (force === true || !account.loaded) && !accountProcess.running) accountProcess.running = true
+    if (installed && state.daemonRunning && !accountProcess.running && !actionProcess.running) accountProcess.running = true
   }
 
   function quickToggle() {
-    if (!installed) { runInstaller(); return }
+    if (!installed || !state.daemonRunning) { open(); return }
     runAction(connected ? ["xvpn", "disconnect"] : ["xvpn", "connect", "--fastest"],
       connected ? "Disconnecting…" : "Finding the fastest server…")
   }
@@ -80,6 +77,7 @@ Panel {
   }
 
   function runAction(command, label) {
+    if (!installed || !state.daemonRunning) { open(); return }
     if (actionProcess.running) return
     lastError = ""
     actionStatus = label
@@ -87,17 +85,12 @@ Panel {
     actionProcess.running = true
   }
 
-  function runInstaller() {
-    if (!bar) return
-    var source = String(setting("installerSource", "https://app.xvpncdn.com/4dzfjmwrjw/cli_install.sh"))
-    var command = Xvpn.shellQuote(installerPath) + " " + Xvpn.shellQuote(source)
-    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote(command))
-    close()
-  }
-
-  function runLogin() {
-    if (!bar) return
-    bar.run("omarchy-launch-floating-terminal-with-presentation " + Util.shellQuote("xvpn login"))
+  function runAccountAction(action) {
+    if (!installed || !state.daemonRunning) { open(); return }
+    if (busy) return
+    accountError = ""
+    lastError = ""
+    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", Xvpn.accountCommand(action)])
     close()
   }
 
@@ -201,8 +194,8 @@ Panel {
       return "ok"
     }
     function disconnect(): string { root.runAction(["xvpn", "disconnect"], "Disconnecting…"); return "ok" }
-    function install(): string { root.runInstaller(); return "ok" }
-    function login(): string { root.runLogin(); return "ok" }
+    function login(): string { root.runAccountAction("login"); return "ok" }
+    function logout(): string { root.runAccountAction("logout"); return "ok" }
   }
 
   BarIconButton {
@@ -427,14 +420,22 @@ Panel {
                   color: root.dim; font.family: root.fontFamily
                   font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
                 }
+                Text {
+                  width: parent.width
+                  text: !root.installed ? "Install the X-VPN CLI using the guide in the main panel."
+                    : (!root.state.daemonRunning ? "The X-VPN daemon is not running. See the setup guide in the main panel."
+                      : (root.accountError || "Account actions open a terminal. Follow the prompts there; account status refreshes automatically."))
+                  wrapMode: Text.WordWrap
+                  color: root.dim; font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
                 Button {
                   width: parent.width
-                  text: root.account.loggedIn ? "Logout" : "Log in"
-                  enabled: root.account.loaded && !root.busy
+                  text: root.account.loggedIn ? "Log out in terminal" : "Log in with X-VPN"
+                  enabled: root.installed && root.state.daemonRunning && !root.busy
                   onClicked: {
                     accountPopup.close()
-                    if (root.account.loggedIn) root.runAction(["xvpn", "logout"], "Logging out…")
-                    else root.runLogin()
+                    root.runAccountAction(root.account.loggedIn ? "logout" : "login")
                   }
                 }
               }
@@ -467,7 +468,7 @@ Panel {
               text: root.busy && root.actionStatus.indexOf("Disconnect") === 0 ? "Disconnecting…"
                 : (root.busy && (root.pendingLocationKey !== "" || root.actionStatus.indexOf("Finding") === 0)
                   ? "Connecting…" : (root.connected ? "Disconnect" : "Connect"))
-              enabled: !root.busy
+              enabled: !root.busy && root.installed && root.state.daemonRunning
               selected: true
               bordered: true
               foreground: root.foreground
@@ -517,8 +518,8 @@ Panel {
             Text {
               width: parent.width
               text: root.installed
-                ? "The CLI is present, but its daemon is not running. Run setup again to repair the installation."
-                : "Install X-VPN using the configured official HTTPS source or a reviewed local script."
+                ? "The CLI is present, but its daemon is not running. See the official guide for setup help, then refresh."
+                : "X-VPN CLI is not installed. Install it using the official guide, then refresh."
               wrapMode: Text.WordWrap
               color: root.dim
               font.family: root.fontFamily
@@ -526,8 +527,13 @@ Panel {
             }
             Button {
               width: parent.width
-              text: root.installed ? "Repair X-VPN in Terminal" : "Install X-VPN in Terminal"
-              onClicked: root.runInstaller()
+              text: "Open installation guide"
+              onClicked: Quickshell.execDetached(["xdg-open", "https://xvpn.io/help-center/use-vpn-on-linux-with-command-line"])
+            }
+            Button {
+              width: parent.width
+              text: "Refresh"
+              onClicked: root.refresh(true)
             }
           }
 
@@ -701,8 +707,10 @@ Panel {
     stdout: StdioCollector { id: statusOutput; waitForEnd: true }
     onExited: function(code) {
       var output = String(statusOutput.text || "")
-      if (code === 0 || /not\s+(installed|found)|daemon/i.test(output))
+      var wasReady = root.installed && root.state.daemonRunning
+      if (code === 0 || code === 127 || /not\s+(installed|found)|no such file|daemon/i.test(output))
         root.state = Xvpn.parseStatus(output, code)
+      if (!wasReady && root.installed && root.state.daemonRunning) root.refresh(true)
     }
   }
 
@@ -721,7 +729,12 @@ Panel {
     stdout: StdioCollector { id: accountOutput; waitForEnd: true }
     onExited: function(code) {
       var parsed = Xvpn.parseAccount(accountOutput.text, code)
-      if (parsed.definitive) root.account = parsed
+      if (parsed.definitive) {
+        root.account = parsed
+        root.accountError = ""
+      } else {
+        root.accountError = "Could not refresh account status. Try again or use the account action below."
+      }
     }
   }
 

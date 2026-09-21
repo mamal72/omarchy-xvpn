@@ -28,12 +28,6 @@ jobs:
       - name: Run Model Tests
         run: node tests/xvpn.test.js
 
-      - name: Validate Installer Syntax
-        run: bash -n bin/install-xvpn
-
-      - name: Lint Installer
-        run: shellcheck bin/install-xvpn
-
   qml:
     name: QML
     runs-on: ubuntu-latest

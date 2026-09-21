@@ -14,7 +14,7 @@ function parseStatus(raw, exitCode) {
   var location = field(text, ["location", "server", "connected to"])
   var protocol = field(text, ["protocol"])
   return {
-    available: exitCode === 0 || !/not found|no such file/i.test(text),
+    available: exitCode === 0 || (exitCode !== 127 && !/not installed|not found|no such file/i.test(text)),
     daemonRunning: !/daemon process not running|failed to find running daemon/i.test(text),
     connected: connected,
     location: location,
@@ -222,7 +222,7 @@ function parseAccount(raw, exitCode) {
   var account = field(text, ["account", "email"])
   var subscription = field(text, ["subscription"])
   var status = field(text, ["status"])
-  var signedOut = /not (?:logged|signed)[ -]?in|please (?:log|sign) in|login required/i.test(text)
+  var signedOut = /not (?:logged|signed)[ -]?in|please (?:log[ -]?in|sign[ -]?in)|(?:login|authentication) required|not logged on|no (?:active )?account|not login/i.test(text)
   return {
     loaded: true,
     loggedIn: exitCode === 0 && account !== "" && !signedOut,
@@ -235,6 +235,10 @@ function parseAccount(raw, exitCode) {
   }
 }
 
-function shellQuote(value) {
-  return "'" + String(value || "").replace(/'/g, "'\\''") + "'"
+// Only fixed account actions are allowed; credentials stay in the interactive terminal.
+function accountCommand(action) {
+  if (action !== "login" && action !== "logout") throw new Error("Unsupported account action")
+  return 'flock -w 20 "${XDG_RUNTIME_DIR:-/tmp}/omarchy-xvpn-cli.lock" xvpn ' + action
+    + '; result=$?; if [ "$result" -ne 0 ]; then printf "\\nX-VPN account action failed (exit %s). Please try again.\\n" "$result"; fi; '
+    + 'omarchy-shell xvpn refresh'
 }

@@ -6,6 +6,6 @@ Please do not open a public issue for a vulnerability. Use GitHub's private vuln
 
 Never include X-VPN credentials, session data, or an unredacted public IP address in a report.
 
-## Installer boundary
+## External CLI boundary
 
-The installation helper accepts only the pinned official X-VPN HTTPS installer URL or an absolute local path. It displays the complete script and requires interactive confirmation before execution. Review vendor scripts independently before granting elevated access.
+The X-VPN Linux CLI must be installed, updated, and repaired independently by the user. The plugin links to the official Linux CLI guide and detects CLI availability; it does not download or execute installers, accept installer sources, or request elevated privileges. Connection and account actions use the existing X-VPN CLI.

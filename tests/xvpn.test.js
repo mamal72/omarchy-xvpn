@@ -6,7 +6,7 @@ const vm = require("node:vm")
 const source = fs.readFileSync(path.join(__dirname, "../model/Xvpn.js"), "utf8")
   .replace(/^\.pragma library\s*/, "")
 const Xvpn = {}
-vm.runInNewContext(source + "\nthis.exports = { clean, parseStatus, parseLocations, filteredLocations, countryRows, countryLocations, accordionRows, parseProtocols, parsePublicIp, parseIpInfo, parseAccount, shellQuote }", Xvpn)
+vm.runInNewContext(source + "\nthis.exports = { clean, parseStatus, parseLocations, filteredLocations, countryRows, countryLocations, accordionRows, parseProtocols, parsePublicIp, parseIpInfo, parseAccount, accountCommand }", Xvpn)
 const api = Xvpn.exports
 
 assert.deepEqual({ ...api.parseStatus("Status: Connected\nLocation: NL - Amsterdam\nProtocol: Everest", 0) }, {
@@ -15,6 +15,10 @@ assert.deepEqual({ ...api.parseStatus("Status: Connected\nLocation: NL - Amsterd
   message: "Status: Connected\nLocation: NL - Amsterdam\nProtocol: Everest"
 })
 assert.equal(api.parseStatus("ERROR: failed to find running daemon: daemon process not running", 1).daemonRunning, false)
+assert.equal(api.parseStatus("", 127).available, false)
+assert.equal(api.parseStatus("flock: failed to execute xvpn: No such file or directory", 69).available, false)
+assert.equal(api.parseStatus("X-VPN is not installed", 1).available, false)
+assert.equal(api.parseStatus("ERROR: failed to find running daemon: daemon process not running", 1).available, true)
 assert.equal(api.parseStatus("Status: Disconnected", 0).connected, false)
 assert.equal(JSON.stringify(api.parseLocations("ID  Name\n1  Netherlands\n2  United States")), JSON.stringify([
   { key: "1", label: "Netherlands", depth: 0, search: "1 netherlands" },
@@ -67,6 +71,38 @@ assert.deepEqual({ ...api.parseIpInfo('{"success":true,"ip":"1.2.3.4","type":"IP
   loaded: true, ok: true, ip: "1.2.3.4", city: "Amsterdam", region: "North Holland", country: "Netherlands",
   countryCode: "NL", flag: "🇳🇱", isp: "Example ISP", org: "Example", asn: "AS123"
 })
-assert.equal(api.shellQuote("a'b"), "'a'\\''b'")
+
+// Account-state failures must not be mistaken for a confirmed logout.
+for (const text of ["Please login first", "You are not logged in", "Login required", "\x1b[0;31mERROR:\x1b[0m Please login to your premium account first. Use `xvpn login`."]) {
+  assert.equal(api.parseAccount(text, 1).definitive, true)
+  assert.equal(api.parseAccount(text, 1).signedOut, true)
+}
+assert.equal(api.parseAccount("temporary daemon error", 1).definitive, false)
+assert.throws(() => api.accountCommand("logout; touch /tmp/unexpected"), /Unsupported/)
+
+// Exercise the actual terminal command with interactive CLI stubs, including failures.
+const os = require("node:os")
+const cp = require("node:child_process")
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "xvpn-account-test-"))
+try {
+  fs.writeFileSync(path.join(temp, "xvpn"), '#!/bin/sh\nread -r answer\nprintf "%s:%s\\n" "$1" "$answer" >> "$TRACE"\nexit "$CLI_EXIT"\n', { mode: 0o755 })
+  fs.writeFileSync(path.join(temp, "omarchy-shell"), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TRACE"\n', { mode: 0o755 })
+  for (const action of ["login", "logout"]) {
+    for (const code of [0, 1]) {
+      const trace = path.join(temp, "trace")
+      fs.writeFileSync(trace, "")
+      const result = cp.spawnSync("sh", ["-c", api.accountCommand(action)], {
+        input: "confirmation\n", encoding: "utf8",
+        env: { ...process.env, PATH: temp + path.delimiter + process.env.PATH,
+          XDG_RUNTIME_DIR: temp, TRACE: trace, CLI_EXIT: String(code) }
+      })
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(fs.readFileSync(trace, "utf8"), action + ":confirmation\nxvpn refresh\n")
+      assert.equal(result.stdout.includes("account action failed"), code !== 0)
+    }
+  }
+} finally {
+  fs.rmSync(temp, { recursive: true, force: true })
+}
 
 console.log("xvpn model tests passed")

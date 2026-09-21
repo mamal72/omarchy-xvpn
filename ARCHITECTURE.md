@@ -1,10 +1,10 @@
 # Architecture
 
-`Panel.qml` is the Omarchy entry point. It owns X-VPN processes, polling, IPC, and the native panel. `model/Xvpn.js` contains pure parsers, filters, validation, and quoting helpers. `bin/install-xvpn` is the only installation boundary; it accepts the official HTTPS URL or a local file and requires confirmation in a terminal.
+`Panel.qml` is the Omarchy entry point. It owns X-VPN processes, polling, IPC, and the native panel. `model/Xvpn.js` contains pure parsers, filters, validation, and account-command construction. The X-VPN CLI is an external prerequisite. The panel links to the official setup guide and refreshes CLI availability; installation, updates, and repair remain outside the plugin.
 
 ## CLI boundary
 
-All connection state comes from `xvpn status`. Locations come from `xvpn location`. Mutations use `xvpn connect`, `xvpn connect --fastest`, and `xvpn disconnect`. Output parsing strips ANSI escapes and matches named fields rather than fixed line positions.
+All connection state comes from `xvpn status`. Locations come from `xvpn location`. Mutations use `xvpn connect`, `xvpn connect --fastest`, and `xvpn disconnect`. Output parsing strips ANSI escapes and matches named fields rather than fixed line positions. Login and logout run in an interactive terminal under the same CLI lock as background queries. Both request a refresh when finished, and regular polling also refreshes account state.
 
 ## Future routing boundary
 
