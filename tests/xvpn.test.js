@@ -72,6 +72,14 @@ assert.deepEqual({ ...api.parseIpInfo('{"success":true,"ip":"1.2.3.4","type":"IP
   countryCode: "NL", flag: "🇳🇱", isp: "Example ISP", org: "Example", asn: "AS123"
 })
 
+const ipLimit = Xvpn.ipInfoMaxBytes
+const ipJson = '{"success":true,"ip":"1.2.3.4"}'
+assert.equal(api.parseIpInfo(ipJson.padEnd(ipLimit, " ")).ok, true)
+// Verify oversized, otherwise-valid JSON never reaches JSON.parse.
+const guarded = { JSON: { parse() { throw new Error("JSON.parse must not run") } } }
+vm.runInNewContext(source + "\nthis.parseIpInfo = parseIpInfo", guarded)
+assert.equal(guarded.parseIpInfo(ipJson.padEnd(ipLimit + 1, " ")).error, "IP information response too large")
+
 // Account-state failures must not be mistaken for a confirmed logout.
 for (const text of ["Please login first", "You are not logged in", "Login required", "\x1b[0;31mERROR:\x1b[0m Please login to your premium account first. Use `xvpn login`."]) {
   assert.equal(api.parseAccount(text, 1).definitive, true)
@@ -105,4 +113,39 @@ try {
   fs.rmSync(temp, { recursive: true, force: true })
 }
 
-console.log("xvpn model tests passed")
+// Exercise the panel's actual curl arguments against bounded local fixtures.
+async function testIpResponseLimit() {
+  const http = require("node:http")
+  const panel = fs.readFileSync(path.join(__dirname, "../Panel.qml"), "utf8")
+  const command = vm.runInNewContext(panel.match(/id: ipInfoProcess\s+command: (\[[^\n]+\])/)[1], { Xvpn })
+  const server = http.createServer((req, res) => {
+    const oversized = req.url !== "/normal" && req.url !== "/boundary"
+    const body = ipJson.padEnd(oversized ? ipLimit * 4 : req.url === "/boundary" ? ipLimit : ipJson.length, " ")
+    if (req.url === "/chunked") res.setHeader("Transfer-Encoding", "chunked")
+    else if (req.url === "/unknown") res.useChunkedEncodingByDefault = false
+    else res.setHeader("Content-Length", Buffer.byteLength(body))
+    res.write(body.slice(0, 512))
+    res.end(body.slice(512))
+  })
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+  try {
+    for (const route of ["normal", "boundary", "declared", "chunked", "unknown"]) {
+      const args = Array.from(command.slice(1, -1)).concat(["--noproxy", "*", `http://127.0.0.1:${server.address().port}/${route}`])
+      const result = await new Promise((resolve, reject) => {
+        cp.execFile(command[0], args, { maxBuffer: ipLimit * 8 }, (error, stdout, stderr) => {
+          if (error && typeof error.code !== "number") return reject(error)
+          resolve({ code: error ? error.code : 0, stdout, stderr })
+        })
+      })
+      const oversized = !["normal", "boundary"].includes(route)
+      assert.equal(result.code, oversized ? 63 : 0, `${route}: ${result.stderr}`)
+      assert.ok(Buffer.byteLength(result.stdout) <= ipLimit, `${route}: output exceeded cap`)
+      if (!oversized) assert.equal(api.parseIpInfo(result.stdout).ok, true)
+    }
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+  }
+}
+
+testIpResponseLimit().then(() => console.log("xvpn model and response limit tests passed"))
+  .catch(error => { console.error(error); process.exitCode = 1 })

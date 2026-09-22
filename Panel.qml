@@ -749,7 +749,7 @@ Panel {
 
   Process {
     id: ipInfoProcess
-    command: ["curl", "--fail", "--silent", "--show-error", "--max-time", "8", "https://ipwho.is/"]
+    command: ["curl", "--fail", "--silent", "--show-error", "--max-time", "8", "--max-filesize", String(Xvpn.ipInfoMaxBytes), "https://ipwho.is/"]
     stdout: StdioCollector { id: ipOutput; waitForEnd: true }
     onExited: function(code) {
       if (code === 0) root.ipInfo = Xvpn.parseIpInfo(ipOutput.text)

@@ -2,6 +2,7 @@
 
 var GLYPH_BOLT = String.fromCodePoint(0xF04C5)
 var GLYPH_PIN = String.fromCodePoint(0xF034E)
+var ipInfoMaxBytes = 16384
 
 function clean(raw) {
   return String(raw || "").replace(/\x1b\[[0-9;]*m/g, "").trim()
@@ -190,8 +191,12 @@ function accordionRows(locations, expandedCountries, query) {
 }
 
 function parseIpInfo(raw) {
+  var text = String(raw || "")
+  // curl caps transport bytes; also bound decoded input before JSON parsing.
+  if (text.length > ipInfoMaxBytes)
+    return { loaded: true, ok: false, error: "IP information response too large" }
   try {
-    var data = JSON.parse(String(raw || ""))
+    var data = JSON.parse(text)
     if (data.success === false || !data.ip) return { loaded: true, ok: false, error: String(data.message || "IP information unavailable") }
     var connection = data.connection || {}
     return {
