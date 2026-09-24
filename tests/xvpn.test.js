@@ -9,6 +9,13 @@ const Xvpn = {}
 vm.runInNewContext(source + "\nthis.exports = { clean, parseStatus, parseLocations, filteredLocations, countryRows, countryLocations, accordionRows, parseProtocols, parsePublicIp, parseIpInfo, parseAccount, accountCommand }", Xvpn)
 const api = Xvpn.exports
 
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"))
+const panel = fs.readFileSync(path.join(__dirname, "../Panel.qml"), "utf8")
+const displayedVersion = panel.match(/readonly property string pluginVersion: "([^"]+)"/)
+assert.ok(displayedVersion, "About version is missing")
+assert.equal(displayedVersion[1], manifest.version, "About version differs from manifest.json")
+assert.match(panel, /text: "Version " \+ root\.pluginVersion \+ " · MIT License"/)
+
 assert.deepEqual({ ...api.parseStatus("Status: Connected\nLocation: NL - Amsterdam\nProtocol: Everest", 0) }, {
   available: true, daemonRunning: true, connected: true,
   location: "NL - Amsterdam", protocol: "Everest",
@@ -116,14 +123,17 @@ try {
 // Exercise the panel's actual curl arguments against bounded local fixtures.
 async function testIpResponseLimit() {
   const http = require("node:http")
-  const panel = fs.readFileSync(path.join(__dirname, "../Panel.qml"), "utf8")
   const command = vm.runInNewContext(panel.match(/id: ipInfoProcess\s+command: (\[[^\n]+\])/)[1], { Xvpn })
   const server = http.createServer((req, res) => {
     const oversized = req.url !== "/normal" && req.url !== "/boundary"
     const body = ipJson.padEnd(oversized ? ipLimit * 4 : req.url === "/boundary" ? ipLimit : ipJson.length, " ")
-    if (req.url === "/chunked") res.setHeader("Transfer-Encoding", "chunked")
-    else if (req.url === "/unknown") res.useChunkedEncodingByDefault = false
-    else res.setHeader("Content-Length", Buffer.byteLength(body))
+    if (req.url === "/chunked") {
+      res.setHeader("Transfer-Encoding", "chunked")
+    } else if (req.url === "/unknown") {
+      res.useChunkedEncodingByDefault = false
+    } else {
+      res.setHeader("Content-Length", Buffer.byteLength(body))
+    }
     res.write(body.slice(0, 512))
     res.end(body.slice(512))
   })
@@ -133,19 +143,76 @@ async function testIpResponseLimit() {
       const args = Array.from(command.slice(1, -1)).concat(["--noproxy", "*", `http://127.0.0.1:${server.address().port}/${route}`])
       const result = await new Promise((resolve, reject) => {
         cp.execFile(command[0], args, { maxBuffer: ipLimit * 8 }, (error, stdout, stderr) => {
-          if (error && typeof error.code !== "number") return reject(error)
+          if (error && typeof error.code !== "number") {
+            reject(error)
+            return
+          }
           resolve({ code: error ? error.code : 0, stdout, stderr })
         })
       })
       const oversized = !["normal", "boundary"].includes(route)
       assert.equal(result.code, oversized ? 63 : 0, `${route}: ${result.stderr}`)
       assert.ok(Buffer.byteLength(result.stdout) <= ipLimit, `${route}: output exceeded cap`)
-      if (!oversized) assert.equal(api.parseIpInfo(result.stdout).ok, true)
+      if (!oversized) {
+        assert.equal(api.parseIpInfo(result.stdout).ok, true)
+      }
     }
   } finally {
     await new Promise(resolve => server.close(resolve))
   }
 }
 
-testIpResponseLimit().then(() => console.log("xvpn model and response limit tests passed"))
-  .catch(error => { console.error(error); process.exitCode = 1 })
+// A new server choice must be able to stop the CLI holding the shared lock.
+async function testConnectCancellation() {
+  const shellCommand = panel.match(/'exec 2>&1; exec flock -F[^']+'/)[0].slice(1, -1)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xvpn-cancel-test-"))
+  const lock = path.join(dir, "omarchy-xvpn-cli.lock")
+  try {
+    fs.writeFileSync(path.join(dir, "xvpn"),
+      '#!/usr/bin/env node\nprocess.stdout.write("READY\\n")\nsetInterval(() => {}, 1000)\n', { mode: 0o755 })
+    const child = cp.spawn("sh", ["-c", shellCommand, "xvpn", "connect", "fake"], {
+      env: { ...process.env, PATH: dir + path.delimiter + process.env.PATH, XDG_RUNTIME_DIR: dir },
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGKILL")
+        reject(new Error("CLI did not start"))
+      }, 3000)
+      child.once("error", error => {
+        clearTimeout(timeout)
+        reject(error)
+      })
+      child.stdout.once("data", data => {
+        clearTimeout(timeout)
+        if (!String(data).includes("READY")) {
+          reject(new Error("Unexpected CLI output"))
+        } else {
+          resolve()
+        }
+      })
+    })
+    child.kill("SIGTERM")
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        child.kill("SIGKILL")
+        reject(new Error("CLI did not stop"))
+      }, 3000)
+      child.once("exit", () => {
+        clearTimeout(timeout)
+        resolve()
+      })
+    })
+    assert.equal(cp.spawnSync("flock", ["-n", lock, "true"]).status, 0,
+      "cancelled CLI still holds the lock")
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+testIpResponseLimit().then(testConnectCancellation)
+  .then(() => console.log("xvpn model, response limit, and cancellation tests passed"))
+  .catch(error => {
+    console.error(error)
+    process.exitCode = 1
+  })

@@ -23,21 +23,49 @@ Panel {
   property string actionStatus: ""
   property string pendingLocationKey: ""
   property string lastError: ""
+  property var requestedAction: null
+  property var activeAction: null
+  property string actionPhase: ""
+  property bool needsDisconnect: false
+  property bool verifyConnection: false
+  property bool verificationReady: false
+  property bool verificationNeedsFreshStatus: false
   property string accountError: ""
   property var account: ({ loaded: false, loggedIn: false, account: "", subscription: "", status: "", message: "" })
   property int selectedIndex: 0
+  // Keep the About label in sync with manifest.json; the model test checks this value.
+  readonly property string pluginVersion: "1.0.4"
   readonly property var visibleRows: Xvpn.accordionRows(locations, expandedCountries, query)
   readonly property bool installed: state.available
   readonly property bool connected: state.connected
-  readonly property bool busy: actionProcess.running
+  readonly property bool busy: actionProcess.running || requestedAction !== null || needsDisconnect || verifyConnection
   readonly property real locationSideInset: Style.space(10)
   readonly property real locationActionWidth: Style.space(130)
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property color connectedColor: "#34c759"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property string statusTitle: !installed ? "X-VPN is not installed"
-    : (!state.daemonRunning ? "X-VPN needs setup" : (connected ? "Protected" : "Not connected"))
+  readonly property string statusTitle: {
+    if (!installed) {
+      return "X-VPN is not installed"
+    }
+    if (!state.daemonRunning) {
+      return "X-VPN needs setup"
+    }
+    if (busy) {
+      if (actionStatus.indexOf("Disconnect") === 0 || actionStatus.indexOf("Cancel") === 0) {
+        return actionStatus
+      }
+      if (verifyConnection) {
+        return "Verifying connection…"
+      }
+      if (actionPhase === "other") {
+        return "Updating…"
+      }
+      return needsDisconnect || actionPhase === "disconnect" ? "Switching server…" : "Connecting…"
+    }
+    return connected ? "Protected" : "Not connected"
+  }
   readonly property string statusMeta: actionStatus !== "" ? actionStatus
     : (lastError !== "" ? lastError
       : (connected && state.location !== "" ? state.location : "X-VPN Linux CLI"))
@@ -49,45 +77,135 @@ Panel {
   }
 
   function refresh(force) {
-    if (!statusProcess.running && !actionProcess.running) statusProcess.running = true
-    if ((force === true || locations.length === 0) && installed && state.daemonRunning && !locationsProcess.running)
+    if (actionProcess.running || requestedAction !== null || needsDisconnect) {
+      return
+    }
+    if (!statusProcess.running) {
+      statusProcess.running = true
+    }
+    if ((force === true || locations.length === 0) && installed && state.daemonRunning && !locationsProcess.running) {
       locationsProcess.running = true
-    if ((force === true || protocols.length === 0) && installed && state.daemonRunning && !protocolsProcess.running)
+    }
+    if ((force === true || protocols.length === 0) && installed && state.daemonRunning && !protocolsProcess.running) {
       protocolsProcess.running = true
-    if (force === true && !ipInfoProcess.running) ipInfoProcess.running = true
-    if (installed && state.daemonRunning && !accountProcess.running && !actionProcess.running) accountProcess.running = true
+    }
+    if (force === true && !ipInfoProcess.running) {
+      ipInfoProcess.running = true
+    }
+    if (installed && state.daemonRunning && !accountProcess.running) {
+      accountProcess.running = true
+    }
   }
 
   function quickToggle() {
-    if (!installed || !state.daemonRunning) { open(); return }
+    if (!installed || !state.daemonRunning) {
+      open()
+      return
+    }
+    if (verifyConnection) {
+      return
+    }
+    if (busy) {
+      cancelAction()
+      return
+    }
     runAction(connected ? ["xvpn", "disconnect"] : ["xvpn", "connect", "--fastest"],
       connected ? "Disconnecting…" : "Finding the fastest server…")
   }
 
   function connectTo(row) {
-    if (!row || busy) return
-    pendingLocationKey = String(row.key)
-    runAction(["xvpn", "connect", String(row.key)], "Connecting to " + row.label + "…")
+    if (!row || pendingLocationKey === String(row.key)) {
+      return
+    }
+    runAction(["xvpn", "connect", String(row.key)], "Connecting to " + row.label + "…", String(row.key))
   }
 
   function xvpnCommand(args) {
     return ["sh", "-c",
-      'exec 2>&1; exec flock -w 20 "${XDG_RUNTIME_DIR:-/tmp}/omarchy-xvpn-cli.lock" xvpn "$@"',
+      'exec 2>&1; exec flock -F -w 20 "${XDG_RUNTIME_DIR:-/tmp}/omarchy-xvpn-cli.lock" xvpn "$@"',
       "xvpn"].concat(args || [])
   }
 
-  function runAction(command, label) {
-    if (!installed || !state.daemonRunning) { open(); return }
-    if (actionProcess.running) return
-    lastError = ""
-    actionStatus = label
-    actionProcess.command = xvpnCommand(command.length > 0 && command[0] === "xvpn" ? command.slice(1) : command)
+  function startAction(action) {
+    activeAction = action
+    actionPhase = action.kind
+    actionProcess.command = xvpnCommand(action.command)
     actionProcess.running = true
   }
 
+  function advanceAction() {
+    if (actionProcess.running) {
+      return
+    }
+    if (needsDisconnect) {
+      needsDisconnect = false
+      startAction({ kind: "disconnect", command: ["disconnect"] })
+    } else if (requestedAction !== null) {
+      var next = requestedAction
+      requestedAction = null
+      startAction(next)
+    } else {
+      activeAction = null
+      actionPhase = ""
+      actionStatus = verifyConnection ? "Verifying connection…" : ""
+      if (!verifyConnection) {
+        pendingLocationKey = ""
+      }
+      ipInfo = ({ loaded: false, ok: false })
+      settleTimer.restart()
+    }
+  }
+
+  function cancelAction() {
+    requestedAction = null
+    pendingLocationKey = ""
+    actionStatus = "Cancelling…"
+    if (actionProcess.running && actionPhase !== "disconnect") {
+      if (actionPhase === "connect") {
+        needsDisconnect = true
+      }
+      actionProcess.signal(15)
+    }
+  }
+
+  function runAction(command, label, locationKey) {
+    if (!installed || !state.daemonRunning) {
+      open()
+      return
+    }
+    var args = command.length > 0 && command[0] === "xvpn" ? command.slice(1) : command
+    var kind = args[0] === "connect" ? "connect" : (args[0] === "disconnect" ? "disconnect" : "other")
+    var action = { kind: kind, command: args }
+    var switching = kind === "connect" && (connected || actionPhase !== "")
+    if (kind === "connect" && (actionPhase === "connect" || (connected && actionPhase === ""))) {
+      needsDisconnect = true
+    }
+    if (kind === "disconnect" && actionPhase === "connect") {
+      needsDisconnect = false
+    }
+    requestedAction = action
+    lastError = ""
+    verifyConnection = false
+    verificationReady = false
+    verificationNeedsFreshStatus = false
+    settleTimer.stop()
+    pendingLocationKey = locationKey || ""
+    actionStatus = switching ? "Switching to " + label.replace(/^Connecting to /, "").replace(/…$/, "") + "…" : label
+    if (actionProcess.running && actionPhase !== "disconnect") {
+      actionProcess.signal(15)
+    } else {
+      advanceAction()
+    }
+  }
+
   function runAccountAction(action) {
-    if (!installed || !state.daemonRunning) { open(); return }
-    if (busy) return
+    if (!installed || !state.daemonRunning) {
+      open()
+      return
+    }
+    if (busy) {
+      return
+    }
     accountError = ""
     lastError = ""
     Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", Xvpn.accountCommand(action)])
@@ -95,7 +213,9 @@ Panel {
   }
 
   function moveSelection(delta) {
-    if (visibleRows.length === 0) return
+    if (visibleRows.length === 0) {
+      return
+    }
     selectedIndex = Math.max(0, Math.min(visibleRows.length - 1, selectedIndex + delta))
     scrollSelectedIntoView()
   }
@@ -103,21 +223,30 @@ Panel {
   function scrollSelectedIntoView() {
     Qt.callLater(function() {
       var item = rowsRepeater.itemAt(root.selectedIndex)
-      if (!item) return
+      if (!item) {
+        return
+      }
       var point = item.mapToItem(panelFlick.contentItem, 0, 0)
       var top = point.y
       var bottom = top + item.height
       var margin = Style.space(8)
-      if (top < panelFlick.contentY + margin) panelFlick.contentY = Math.max(0, top - margin)
-      else if (bottom > panelFlick.contentY + panelFlick.height - margin)
+      if (top < panelFlick.contentY + margin) {
+        panelFlick.contentY = Math.max(0, top - margin)
+      } else if (bottom > panelFlick.contentY + panelFlick.height - margin) {
         panelFlick.contentY = Math.min(panelFlick.contentHeight - panelFlick.height, bottom + margin - panelFlick.height)
+      }
     })
   }
 
   function activateRow(row) {
-    if (!row) return
-    if (row.kind === "country" && row.expandable !== false) toggleCountry(row)
-    else connectTo(row)
+    if (!row) {
+      return
+    }
+    if (row.kind === "country" && row.expandable !== false) {
+      toggleCountry(row)
+    } else {
+      connectTo(row)
+    }
   }
 
   function locationNameMatches(label) {
@@ -128,23 +257,37 @@ Panel {
   }
 
   function rowIsConnected(row) {
-    if (!connected || !row) return false
-    if (locationNameMatches(row.label)) return true
-    if (row.kind !== "country" || row.expandable === false) return false
+    if (!connected || busy || !row) {
+      return false
+    }
+    if (locationNameMatches(row.label)) {
+      return true
+    }
+    if (row.kind !== "country" || row.expandable === false) {
+      return false
+    }
     var children = Xvpn.countryLocations(locations, row)
-    for (var i = 0; i < children.length; i++) if (locationNameMatches(children[i].label)) return true
+    for (var i = 0; i < children.length; i++) {
+      if (locationNameMatches(children[i].label)) {
+        return true
+      }
+    }
     return false
   }
 
   function expandCountry(row) {
-    if (!row || row.expandable === false) return
+    if (!row || row.expandable === false) {
+      return
+    }
     var next = Object.assign({}, expandedCountries)
     next[row.key] = true
     expandedCountries = next
   }
 
   function collapseCountry(row) {
-    if (!row) return
+    if (!row) {
+      return
+    }
     var key = row.kind === "country" ? row.key : row.parentKey
     var parentIndex = 0
     for (var i = 0; i < visibleRows.length; i++) {
@@ -160,22 +303,33 @@ Panel {
   }
 
   function toggleCountry(row) {
-    if (!row || row.expandable === false) return
-    if (row.expanded) collapseCountry(row)
-    else expandCountry(row)
+    if (!row || row.expandable === false) {
+      return
+    }
+    if (row.expanded) {
+      collapseCountry(row)
+    } else {
+      expandCountry(row)
+    }
   }
 
   function setProtocol(value) {
-    if (!value || String(value).toUpperCase() === String(state.protocol || "").toUpperCase()) return
+    if (!value || String(value).toUpperCase() === String(state.protocol || "").toUpperCase()) {
+      return
+    }
     runAction(["xvpn", "protocol", "--set", String(value)], "Switching protocol to " + value + "…")
   }
 
   onVisibleRowsChanged: selectedIndex = Math.max(0, Math.min(selectedIndex, visibleRows.length - 1))
-  onOpenedChanged: if (opened) {
-    query = ""
-    selectedIndex = 0
-    refresh(true)
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  onOpenedChanged: {
+    if (opened) {
+      query = ""
+      selectedIndex = 0
+      refresh(true)
+      Qt.callLater(function() {
+        keyCatcher.forceActiveFocus()
+      })
+    }
   }
 
   implicitWidth: button.implicitWidth
@@ -183,19 +337,42 @@ Panel {
 
   IpcHandler {
     target: "xvpn"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function refresh(): string { root.refresh(true); return "ok" }
-    function status(): string { return root.statusTitle }
-    function connect(location: string): string {
-      if (location === "") root.quickToggle()
-      else root.runAction(["xvpn", "connect", location], "Connecting…")
+    function open(): void {
+      root.open()
+    }
+    function close(): void {
+      root.close()
+    }
+    function toggle(): void {
+      root.toggle()
+    }
+    function refresh(): string {
+      root.refresh(true)
       return "ok"
     }
-    function disconnect(): string { root.runAction(["xvpn", "disconnect"], "Disconnecting…"); return "ok" }
-    function login(): string { root.runAccountAction("login"); return "ok" }
-    function logout(): string { root.runAccountAction("logout"); return "ok" }
+    function status(): string {
+      return root.statusTitle
+    }
+    function connect(location: string): string {
+      if (location === "") {
+        root.quickToggle()
+      } else {
+        root.runAction(["xvpn", "connect", location], "Connecting to " + location + "…")
+      }
+      return "ok"
+    }
+    function disconnect(): string {
+      root.runAction(["xvpn", "disconnect"], "Disconnecting…")
+      return "ok"
+    }
+    function login(): string {
+      root.runAccountAction("login")
+      return "ok"
+    }
+    function logout(): string {
+      root.runAccountAction("logout")
+      return "ok"
+    }
   }
 
   BarIconButton {
@@ -204,17 +381,22 @@ Panel {
     bar: root.bar
     text: ""
     iconComponent: Component {
-      XvpnBrandMark { statusAware: true; connected: root.connected }
+      XvpnBrandMark { statusAware: true; connected: root.connected && !root.busy }
     }
-    dimmed: !root.connected
-    active: root.connected
-    tooltipText: root.connected
-      ? "X-VPN: " + (root.state.location || "Connected")
-      : "X-VPN: " + root.statusTitle
+    dimmed: !root.connected || root.busy
+    active: root.connected && !root.busy
+    tooltipText: root.busy ? "X-VPN: " + root.statusTitle
+      : root.connected
+        ? "X-VPN: " + (root.state.location || "Connected")
+        : "X-VPN: " + root.statusTitle
     onPressed: function(buttonCode) {
-      if (buttonCode === Qt.RightButton) root.quickToggle()
-      else if (buttonCode === Qt.MiddleButton) root.refresh(true)
-      else root.toggle()
+      if (buttonCode === Qt.RightButton) {
+        root.quickToggle()
+      } else if (buttonCode === Qt.MiddleButton) {
+        root.refresh(true)
+      } else {
+        root.toggle()
+      }
     }
   }
 
@@ -233,19 +415,29 @@ Panel {
       anchors.fill: parent
       blocked: search.activeFocus || protocolPicker.popupOpen || accountPopup.opened || aboutPopup.opened
       onMoveRequested: function(dx, dy) {
-        if (dy !== 0) root.moveSelection(dy)
-        else if (dx > 0 && root.visibleRows.length > 0)
+        if (dy !== 0) {
+          root.moveSelection(dy)
+        } else if (dx > 0 && root.visibleRows.length > 0) {
           root.expandCountry(root.visibleRows[root.selectedIndex])
-        else if (dx < 0 && root.visibleRows.length > 0)
+        } else if (dx < 0 && root.visibleRows.length > 0) {
           root.collapseCountry(root.visibleRows[root.selectedIndex])
+        }
       }
-      onActivateRequested: if (root.visibleRows.length > 0) root.activateRow(root.visibleRows[root.selectedIndex])
+      onActivateRequested: {
+        if (root.visibleRows.length > 0) {
+          root.activateRow(root.visibleRows[root.selectedIndex])
+        }
+      }
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(text) {
-        if (text === "/") search.forceActiveFocus()
-        else if (text === "r" || text === "R") root.refresh(true)
-        else if (text === "d" || text === "D") root.runAction(["xvpn", "disconnect"], "Disconnecting…")
+        if (text === "/") {
+          search.forceActiveFocus()
+        } else if (text === "r" || text === "R") {
+          root.refresh(true)
+        } else if (text === "d" || text === "D") {
+          root.runAction(["xvpn", "disconnect"], "Disconnecting…")
+        }
       }
 
       Flickable {
@@ -313,7 +505,13 @@ Panel {
               modal: false
               focus: true
               closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-              onClosed: if (root.opened) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+              onClosed: {
+                if (root.opened) {
+                  Qt.callLater(function() {
+                    keyCatcher.forceActiveFocus()
+                  })
+                }
+              }
               background: BorderSurface {
                 color: Color.background
                 borderSpec: Border.flat(root.dim, 1)
@@ -375,7 +573,7 @@ Panel {
                 }
                 Text {
                   width: parent.width
-                  text: "Version 1.0.0 · MIT License"
+                  text: "Version " + root.pluginVersion + " · MIT License"
                   color: root.dim; font.family: root.fontFamily
                   font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignHCenter
                 }
@@ -391,7 +589,13 @@ Panel {
               modal: false
               focus: true
               closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-              onClosed: if (root.opened) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+              onClosed: {
+                if (root.opened) {
+                  Qt.callLater(function() {
+                    keyCatcher.forceActiveFocus()
+                  })
+                }
+              }
               background: BorderSurface {
                 color: Color.background
                 borderSpec: Border.flat(root.dim, 1)
@@ -465,10 +669,8 @@ Panel {
             Button {
               Layout.preferredWidth: Style.space(104)
               Layout.preferredHeight: Style.space(30)
-              text: root.busy && root.actionStatus.indexOf("Disconnect") === 0 ? "Disconnecting…"
-                : (root.busy && (root.pendingLocationKey !== "" || root.actionStatus.indexOf("Finding") === 0)
-                  ? "Connecting…" : (root.connected ? "Disconnect" : "Connect"))
-              enabled: !root.busy && root.installed && root.state.daemonRunning
+              text: root.verifyConnection ? "Verifying…" : (root.busy ? "Cancel" : (root.connected ? "Disconnect" : "Connect"))
+              enabled: root.installed && root.state.daemonRunning && !root.verifyConnection
               selected: true
               bordered: true
               foreground: root.foreground
@@ -479,6 +681,16 @@ Panel {
               Layout.alignment: Qt.AlignVCenter
               onClicked: root.quickToggle()
             }
+          }
+
+          Text {
+            visible: root.lastError !== ""
+            width: parent.width
+            text: root.lastError
+            wrapMode: Text.WordWrap
+            color: "#ff6b6b"
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
           }
 
           Column {
@@ -560,7 +772,9 @@ Panel {
                   } else if (event.key === Qt.Key_Up) {
                     root.moveSelection(-1); event.accepted = true
                   } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    if (root.visibleRows.length > 0) root.activateRow(root.visibleRows[root.selectedIndex])
+                    if (root.visibleRows.length > 0) {
+                      root.activateRow(root.visibleRows[root.selectedIndex])
+                    }
                     event.accepted = true
                   } else if (event.key === Qt.Key_Right && root.visibleRows.length > 0
                       && root.visibleRows[root.selectedIndex].expandable !== false) {
@@ -568,8 +782,12 @@ Panel {
                   } else if (event.key === Qt.Key_Left && root.visibleRows.length > 0) {
                     root.collapseCountry(root.visibleRows[root.selectedIndex]); event.accepted = true
                   } else if (event.key === Qt.Key_Escape) {
-                    if (text !== "") text = ""
-                    else { focus = false; keyCatcher.forceActiveFocus() }
+                    if (text !== "") {
+                      text = ""
+                    } else {
+                      focus = false
+                      keyCatcher.forceActiveFocus()
+                    }
                     event.accepted = true
                   }
                 }
@@ -648,7 +866,7 @@ Panel {
                       height: Style.space(30)
                       visible: !locationRow.current && (locationRow.hovered || locationRow.connecting)
                       text: locationRow.connecting ? "Connecting…" : "Connect"
-                      enabled: !root.busy && !locationRow.connecting
+                      enabled: !locationRow.connecting
                       selected: true
                       bordered: true
                       foreground: root.foreground
@@ -665,7 +883,6 @@ Panel {
                     PanelActionButton {
                       anchors.fill: parent
                       visible: !locationRow.connecting && modelData.kind === "country" && modelData.expandable !== false
-                      enabled: !root.busy
                       iconText: modelData.expanded ? "⌄" : "›"
                       tooltipText: (modelData.expanded ? "Hide" : "Show") + " cities in " + modelData.label
                       foreground: root.foreground
@@ -678,7 +895,7 @@ Panel {
                   anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
                   anchors.right: parent.right
                   anchors.rightMargin: root.locationActionWidth + root.locationSideInset
-                  enabled: !root.busy
+                  enabled: !locationRow.connecting
                   hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                   onEntered: root.selectedIndex = index
                   onClicked: root.activateRow(modelData)
@@ -708,9 +925,29 @@ Panel {
     onExited: function(code) {
       var output = String(statusOutput.text || "")
       var wasReady = root.installed && root.state.daemonRunning
-      if (code === 0 || code === 127 || /not\s+(installed|found)|no such file|daemon/i.test(output))
+      if (code === 0 || code === 127 || /not\s+(installed|found)|no such file|daemon/i.test(output)) {
         root.state = Xvpn.parseStatus(output, code)
-      if (!wasReady && root.installed && root.state.daemonRunning) root.refresh(true)
+      }
+      if (root.verificationNeedsFreshStatus) {
+        root.verificationNeedsFreshStatus = false
+        root.verificationReady = true
+        root.refresh(true)
+        return
+      }
+      if (root.verifyConnection && root.verificationReady) {
+        root.verifyConnection = false
+        root.verificationReady = false
+        root.actionStatus = ""
+        root.pendingLocationKey = ""
+        if (code !== 0) {
+          root.lastError = Xvpn.clean(output) || "Could not verify the X-VPN connection."
+        } else if (!root.state.connected) {
+          root.lastError = "X-VPN finished without connecting. Try another server or protocol."
+        }
+      }
+      if (!wasReady && root.installed && root.state.daemonRunning) {
+        root.refresh(true)
+      }
     }
   }
 
@@ -719,7 +956,9 @@ Panel {
     command: root.xvpnCommand(["protocol", "--get"])
     stdout: StdioCollector { id: protocolsOutput; waitForEnd: true }
     onExited: function(code) {
-      if (code === 0) root.protocols = Xvpn.parseProtocols(protocolsOutput.text)
+      if (code === 0) {
+        root.protocols = Xvpn.parseProtocols(protocolsOutput.text)
+      }
     }
   }
 
@@ -743,7 +982,9 @@ Panel {
     command: root.xvpnCommand(["location"])
     stdout: StdioCollector { id: locationsOutput; waitForEnd: true }
     onExited: function(code) {
-      if (code === 0) root.locations = Xvpn.parseLocations(locationsOutput.text)
+      if (code === 0) {
+        root.locations = Xvpn.parseLocations(locationsOutput.text)
+      }
     }
   }
 
@@ -752,8 +993,11 @@ Panel {
     command: ["curl", "--fail", "--silent", "--show-error", "--max-time", "8", "--max-filesize", String(Xvpn.ipInfoMaxBytes), "https://ipwho.is/"]
     stdout: StdioCollector { id: ipOutput; waitForEnd: true }
     onExited: function(code) {
-      if (code === 0) root.ipInfo = Xvpn.parseIpInfo(ipOutput.text)
-      else root.ipInfo = ({ loaded: true, ok: false, error: "IP information unavailable" })
+      if (code === 0) {
+        root.ipInfo = Xvpn.parseIpInfo(ipOutput.text)
+      } else {
+        root.ipInfo = ({ loaded: true, ok: false, error: "IP information unavailable" })
+      }
     }
   }
 
@@ -762,15 +1006,37 @@ Panel {
     stdout: StdioCollector { id: actionOutput; waitForEnd: true }
     stderr: StdioCollector { id: actionError; waitForEnd: true }
     onExited: function(code) {
-      root.actionStatus = ""
-      root.pendingLocationKey = ""
-      if (code !== 0) root.lastError = Xvpn.clean(actionError.text || actionOutput.text) || "X-VPN command failed."
-      root.ipInfo = ({ loaded: false, ok: false })
-      settleTimer.restart()
+      var completed = root.activeAction
+      if (completed && completed.kind === "disconnect" && code === 0) {
+        root.state = Object.assign({}, root.state, { connected: false, location: "" })
+      }
+      if (root.requestedAction === null && !root.needsDisconnect && code !== 0) {
+        root.lastError = Xvpn.clean(actionError.text || actionOutput.text) || "X-VPN command failed."
+      }
+      if (completed && completed.kind === "connect" && code === 0
+          && root.requestedAction === null && !root.needsDisconnect) {
+        root.verifyConnection = true
+      }
+      root.activeAction = null
+      root.actionPhase = ""
+      root.advanceAction()
     }
   }
 
-  Timer { id: settleTimer; interval: 1200; onTriggered: root.refresh(true) }
+  Timer {
+    id: settleTimer
+    interval: 1200
+    onTriggered: {
+      if (root.verifyConnection) {
+        if (statusProcess.running) {
+          root.verificationNeedsFreshStatus = true
+          return
+        }
+        root.verificationReady = true
+      }
+      root.refresh(true)
+    }
+  }
   Timer {
     interval: Math.max(5, Number(root.setting("refreshIntervalSec", 10))) * 1000
     repeat: true; running: true; triggeredOnStart: true

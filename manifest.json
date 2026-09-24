@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "xvpn",
   "name": "X-VPN",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "author": "Mohamad Jahani",
   "license": "MIT",
   "description": "A native Omarchy bar controller for the X-VPN Linux CLI.",

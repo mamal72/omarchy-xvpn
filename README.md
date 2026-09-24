@@ -17,6 +17,7 @@ This is an independent community plugin. It is not affiliated with or endorsed b
 ## ✨ Features
 
 - Connect, disconnect, and switch locations without leaving the bar
+- Switch to another server while connecting; the latest selection takes priority
 - Country accordions with flattened city and server choices
 - Fastest Server pinned above the country list
 - Fuzzy location search and complete keyboard navigation
@@ -75,6 +76,8 @@ omarchy plugin remove xvpn
 
 Every location row also exposes a **Connect** button on hover.
 
+Selecting another location interrupts the current connection attempt. The panel disconnects the previous session before connecting to the latest selection, and the **Cancel** button stops an in-progress attempt. Connection progress and failures appear in the panel; after a successful CLI response, the plugin checks `xvpn status` before reporting the final state. Closing the panel does not stop an in-progress connection.
+
 Use the account menu to log in or log out. Both actions open an interactive terminal; complete any prompts there (type `yes` when X-VPN asks you to confirm logout). Account actions share the CLI lock with background queries, and account status refreshes automatically. Credentials stay in the X-VPN terminal flow.
 
 IPC examples:
@@ -105,7 +108,7 @@ omarchy plugin validate .
 
 Keep CLI parsing side-effect free in `model/Xvpn.js`, and add fixtures whenever X-VPN output changes. See [ARCHITECTURE.md](ARCHITECTURE.md) for the component boundaries.
 
-GitHub Actions runs the model tests, validates the manifest, and parses the QML entry point. Pushing a version tag such as `v1.0.2` publishes a GitHub release after every check passes; the tag must match the version in `manifest.json`.
+GitHub Actions runs the model tests, validates the manifest, and parses the QML entry point. Pushing a version tag such as `v1.0.4` publishes a GitHub release after every check passes; the tag must match the version in `manifest.json`.
 
 ## ☕ Support my work
 
