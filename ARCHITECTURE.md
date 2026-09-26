@@ -4,7 +4,7 @@
 
 ## CLI boundary
 
-All connection state comes from `xvpn status`. Locations come from `xvpn location`. Mutations use `xvpn connect`, `xvpn connect --fastest`, and `xvpn disconnect`. The panel keeps only the latest requested action. A new location interrupts an in-progress CLI connection, then disconnects before connecting to the replacement. CLI commands use `flock --no-fork` so signalling the Quickshell process reaches X-VPN itself. A successful connect response is checked against a fresh status query before the UI settles. Output parsing strips ANSI escapes and matches named fields rather than fixed line positions. Login and logout run in an interactive terminal under the same CLI lock as background queries. Both request a refresh when finished, and regular polling also refreshes account state.
+All connection state comes from `xvpn status`. Locations come from `xvpn location`. Mutations use `xvpn connect`, `xvpn connect --fastest`, and `xvpn disconnect`. The panel keeps only the latest requested action. A new location interrupts an in-progress CLI connection, then disconnects before connecting to the replacement. `scripts/xvpn-guard.py` holds the CLI lock, combines stdout and stderr, and caps output before QML collects it. Its command-specific deadlines stop stalled CLI processes and cancellation terminates the CLI process group. A successful connect response is checked against a fresh status query before the UI settles. Output parsing strips ANSI escapes and matches named fields rather than fixed line positions. Login and logout run in an interactive terminal under the same CLI lock as background queries. Both request a refresh when finished, and regular polling also refreshes account state.
 
 ## Future routing boundary
 

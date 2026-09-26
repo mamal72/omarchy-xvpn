@@ -33,7 +33,7 @@ Geo-list direct routing is intentionally out of scope for this release. Its plan
 ## 📋 Requirements
 
 - Omarchy with shell plugin support
-- `curl`, `flock` (util-linux), and `xdg-open` (xdg-utils)
+- `curl`, `flock` (util-linux), `python3`, and `xdg-open` (xdg-utils)
 - The X-VPN Linux CLI and a supported X-VPN account
 
 X-VPN's [Linux documentation](https://xvpn.io/download/vpn-linux) currently states that Linux CLI access requires Premium.
@@ -108,7 +108,7 @@ omarchy plugin validate .
 
 Keep CLI parsing side-effect free in `model/Xvpn.js`, and add fixtures whenever X-VPN output changes. See [ARCHITECTURE.md](ARCHITECTURE.md) for the component boundaries.
 
-GitHub Actions runs the model tests, validates the manifest, and parses the QML entry point. Pushing a version tag such as `v1.0.4` publishes a GitHub release after every check passes; the tag must match the version in `manifest.json`.
+GitHub Actions runs the model tests, validates the manifest, and parses the QML entry point. Pushing a version tag such as `v1.0.5` publishes a GitHub release after every check passes; the tag must match the version in `manifest.json`.
 
 ## ☕ Support my work
 

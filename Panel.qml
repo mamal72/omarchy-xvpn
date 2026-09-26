@@ -34,7 +34,7 @@ Panel {
   property var account: ({ loaded: false, loggedIn: false, account: "", subscription: "", status: "", message: "" })
   property int selectedIndex: 0
   // Keep the About label in sync with manifest.json; the model test checks this value.
-  readonly property string pluginVersion: "1.0.4"
+  readonly property string pluginVersion: "1.0.5"
   readonly property var visibleRows: Xvpn.accordionRows(locations, expandedCountries, query)
   readonly property bool installed: state.available
   readonly property bool connected: state.connected
@@ -121,9 +121,8 @@ Panel {
   }
 
   function xvpnCommand(args) {
-    return ["sh", "-c",
-      'exec 2>&1; exec flock -F -w 20 "${XDG_RUNTIME_DIR:-/tmp}/omarchy-xvpn-cli.lock" xvpn "$@"',
-      "xvpn"].concat(args || [])
+    var guard = decodeURIComponent(String(Qt.resolvedUrl("scripts/xvpn-guard.py")).replace(/^file:\/\//, ""))
+    return ["python3", guard].concat(args || [])
   }
 
   function startAction(action) {
@@ -1004,14 +1003,13 @@ Panel {
   Process {
     id: actionProcess
     stdout: StdioCollector { id: actionOutput; waitForEnd: true }
-    stderr: StdioCollector { id: actionError; waitForEnd: true }
     onExited: function(code) {
       var completed = root.activeAction
       if (completed && completed.kind === "disconnect" && code === 0) {
         root.state = Object.assign({}, root.state, { connected: false, location: "" })
       }
       if (root.requestedAction === null && !root.needsDisconnect && code !== 0) {
-        root.lastError = Xvpn.clean(actionError.text || actionOutput.text) || "X-VPN command failed."
+        root.lastError = Xvpn.clean(actionOutput.text) || "X-VPN command failed."
       }
       if (completed && completed.kind === "connect" && code === 0
           && root.requestedAction === null && !root.needsDisconnect) {

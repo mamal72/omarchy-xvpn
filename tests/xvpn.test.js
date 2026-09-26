@@ -162,35 +162,60 @@ async function testIpResponseLimit() {
   }
 }
 
+// The guard must bound both CLI streams before Quickshell can collect them.
+async function testCliGuard() {
+  const guard = path.join(__dirname, "../scripts/xvpn-guard.py")
+  assert.match(panel, /return \["python3", guard\]\.concat\(args \|\| \[\]\)/)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xvpn-guard-test-"))
+  try {
+    fs.writeFileSync(path.join(dir, "xvpn"), `#!/usr/bin/env node
+if (process.env.MODE === "large") process.stderr.write("x".repeat(20000))
+else if (process.env.MODE === "hang") setInterval(() => {}, 1000)
+else process.stdout.write("Status: Disconnected\\n")
+`, { mode: 0o755 })
+    const env = { ...process.env, PATH: dir + path.delimiter + process.env.PATH, XDG_RUNTIME_DIR: dir }
+    const normal = cp.spawnSync("python3", [guard, "status"], { env, encoding: "utf8", timeout: 5000 })
+    assert.equal(normal.status, 0, normal.stderr)
+    assert.equal(normal.stdout, "Status: Disconnected\n")
+    const large = cp.spawnSync("python3", [guard, "status"], {
+      env: { ...env, MODE: "large" }, encoding: "utf8", timeout: 5000
+    })
+    assert.equal(large.status, 70, large.stderr)
+    assert.equal(large.stdout, "X-VPN command output exceeded the limit\n")
+    const quickDeadline = `import runpy, sys; g = runpy.run_path(sys.argv[1]); g["main"].__globals__["LIMITS"]["status"] = (16384, 1); sys.exit(g["main"](["status"]))`
+    const hang = cp.spawnSync("python3", ["-c", quickDeadline, guard], {
+      env: { ...env, MODE: "hang" }, encoding: "utf8", timeout: 5000
+    })
+    assert.equal(hang.status, 124, hang.stderr)
+    assert.equal(hang.stdout, "X-VPN command timed out\n")
+    assert.equal(cp.spawnSync("flock", ["-n", path.join(dir, "omarchy-xvpn-cli.lock"), "true"]).status, 0,
+      "timed-out CLI still holds the lock")
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 // A new server choice must be able to stop the CLI holding the shared lock.
 async function testConnectCancellation() {
-  const shellCommand = panel.match(/'exec 2>&1; exec flock -F[^']+'/)[0].slice(1, -1)
+  const guard = path.join(__dirname, "../scripts/xvpn-guard.py")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xvpn-cancel-test-"))
   const lock = path.join(dir, "omarchy-xvpn-cli.lock")
   try {
     fs.writeFileSync(path.join(dir, "xvpn"),
       '#!/usr/bin/env node\nprocess.stdout.write("READY\\n")\nsetInterval(() => {}, 1000)\n', { mode: 0o755 })
-    const child = cp.spawn("sh", ["-c", shellCommand, "xvpn", "connect", "fake"], {
+    const child = cp.spawn("python3", [guard, "connect", "fake"], {
       env: { ...process.env, PATH: dir + path.delimiter + process.env.PATH, XDG_RUNTIME_DIR: dir },
       stdio: ["ignore", "pipe", "pipe"]
     })
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        child.kill("SIGKILL")
-        reject(new Error("CLI did not start"))
-      }, 3000)
-      child.once("error", error => {
-        clearTimeout(timeout)
-        reject(error)
-      })
-      child.stdout.once("data", data => {
-        clearTimeout(timeout)
-        if (!String(data).includes("READY")) {
-          reject(new Error("Unexpected CLI output"))
-        } else {
-          resolve()
-        }
-      })
+      const started = Date.now()
+      const check = () => {
+        if (child.exitCode !== null) return reject(new Error("CLI exited before cancellation"))
+        if (cp.spawnSync("flock", ["-n", lock, "true"]).status === 1) return resolve()
+        if (Date.now() - started > 3000) return reject(new Error("CLI did not start"))
+        setTimeout(check, 25)
+      }
+      check()
     })
     child.kill("SIGTERM")
     await new Promise((resolve, reject) => {
@@ -210,7 +235,7 @@ async function testConnectCancellation() {
   }
 }
 
-testIpResponseLimit().then(testConnectCancellation)
+testIpResponseLimit().then(testCliGuard).then(testConnectCancellation)
   .then(() => console.log("xvpn model, response limit, and cancellation tests passed"))
   .catch(error => {
     console.error(error)
