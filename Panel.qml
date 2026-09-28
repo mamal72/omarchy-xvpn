@@ -605,6 +605,7 @@ Panel {
                 Text {
                   width: parent.width
                   text: root.account.loggedIn ? root.account.account : "X-VPN account"
+                  textFormat: Text.PlainText
                   color: root.foreground; font.family: root.fontFamily
                   font.pixelSize: Style.font.body; font.bold: true; elide: Text.ElideRight
                 }
@@ -612,6 +613,7 @@ Panel {
                   visible: root.account.loggedIn
                   width: parent.width
                   text: root.account.subscription || "Subscription unavailable"
+                  textFormat: Text.PlainText
                   color: root.dim; font.family: root.fontFamily
                   font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
                 }
@@ -620,6 +622,7 @@ Panel {
                   visible: root.account.loggedIn && root.account.status !== ""
                   width: parent.width
                   text: root.account.status
+                  textFormat: Text.PlainText
                   color: root.dim; font.family: root.fontFamily
                   font.pixelSize: Style.font.caption; wrapMode: Text.WordWrap
                 }
@@ -654,12 +657,14 @@ Panel {
               Text {
                 Layout.fillWidth: true
                 text: root.statusTitle
+                textFormat: Text.PlainText
                 color: root.foreground; font.family: root.fontFamily
                 font.pixelSize: Style.font.title; font.bold: true; elide: Text.ElideRight
               }
               Text {
                 Layout.fillWidth: true
                 text: root.heroMeta.toUpperCase()
+                textFormat: Text.PlainText
                 color: root.dim; font.family: root.fontFamily
                 font.pixelSize: Style.font.caption; font.bold: true; font.letterSpacing: 1.2
                 elide: Text.ElideRight
@@ -686,6 +691,7 @@ Panel {
             visible: root.lastError !== ""
             width: parent.width
             text: root.lastError
+            textFormat: Text.PlainText
             wrapMode: Text.WordWrap
             color: "#ff6b6b"
             font.family: root.fontFamily
@@ -833,6 +839,7 @@ Panel {
                   anchors.rightMargin: root.locationSideInset
                   Text {
                     text: modelData.flag || (modelData.kind === "country" ? Xvpn.GLYPH_PIN : "")
+                    textFormat: Text.PlainText
                     color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.body
                     Layout.preferredWidth: Style.space(24)
                     horizontalAlignment: Text.AlignHCenter
@@ -849,6 +856,7 @@ Panel {
                   }
                   Text {
                     text: modelData.label
+                    textFormat: Text.PlainText
                     color: root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
@@ -1059,6 +1067,7 @@ Panel {
       }
       Text {
         text: parent.parent.value
+        textFormat: Text.PlainText
         color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.body
         Layout.fillWidth: true; elide: Text.ElideRight
       }
