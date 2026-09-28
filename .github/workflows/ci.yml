@@ -61,7 +61,12 @@ jobs:
           version="$(python -c 'import json; print(json.load(open("manifest.json"))["version"])')"
           test "$GITHUB_REF_NAME" = "v$version"
 
-      - name: Publish GitHub Release
+      - name: Publish or reuse GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "X-VPN $GITHUB_REF_NAME"
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json id > /dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "X-VPN $GITHUB_REF_NAME"
+          fi
