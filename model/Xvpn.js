@@ -4,6 +4,15 @@ var GLYPH_BOLT = String.fromCodePoint(0xF04C5)
 var GLYPH_PIN = String.fromCodePoint(0xF034E)
 var ipInfoMaxBytes = 16384
 
+function validLocationKey(key) {
+  return typeof key === "string" && /^[a-f0-9]{7}$/i.test(key)
+}
+
+function safeTooltipText(value) {
+  return String(value || "").replace(/</g, "‹").replace(/>/g, "›")
+    .replace(/&/g, "＆").replace(/[\x00-\x1f\x7f]/g, " ")
+}
+
 function clean(raw) {
   return String(raw || "").replace(/\x1b\[[0-9;]*m/g, "").trim()
 }
@@ -48,18 +57,11 @@ function parseLocations(raw) {
     var label = ""
     var depth = 0
 
-    if (tree) {
-      label = tree[2].trim()
-      id = tree[3]
-      depth = Math.floor(tree[1].replace(/[^│ ]/g, "").length / 4)
-    } else {
-      var line = rawLine.replace(/^\s*[>*✓✔•-]\s*/, "").trim()
-      if (line === "" || /^(location|id|name|available|selected|current)[\s:]/i.test(line)) continue
-      if (/^[-=]+$/.test(line) || /error:|usage:|flags:/i.test(line)) continue
-      var columns = line.split(/\s{2,}|\t+/).map(function(value) { return value.trim() }).filter(Boolean)
-      id = columns.length > 1 && /^[a-z0-9_-]+$/i.test(columns[0]) ? columns.shift() : line
-      label = columns.length > 0 ? columns.join(" · ") : line
-    }
+    if (!tree) continue
+    label = tree[2].trim()
+    id = tree[3]
+    depth = Math.floor(tree[1].replace(/[^│ ]/g, "").length / 4)
+    if (!validLocationKey(id) || label === "") continue
     var key = id.toLowerCase()
     if (!seen[key]) {
       rows.push({ key: id, label: label, depth: depth, search: (id + " " + label).toLowerCase() })

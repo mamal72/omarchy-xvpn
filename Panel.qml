@@ -114,10 +114,10 @@ Panel {
   }
 
   function connectTo(row) {
-    if (!row || pendingLocationKey === String(row.key)) {
+    if (!row || !Xvpn.validLocationKey(row.key) || pendingLocationKey === row.key) {
       return
     }
-    runAction(["xvpn", "connect", String(row.key)], "Connecting to " + row.label + "…", String(row.key))
+    runAction(["xvpn", "connect", row.key], "Connecting to " + row.label + "…", row.key)
   }
 
   function xvpnCommand(args) {
@@ -355,6 +355,8 @@ Panel {
     function connect(location: string): string {
       if (location === "") {
         root.quickToggle()
+      } else if (!Xvpn.validLocationKey(location)) {
+        return "Invalid X-VPN location code"
       } else {
         root.runAction(["xvpn", "connect", location], "Connecting to " + location + "…")
       }
@@ -386,7 +388,7 @@ Panel {
     active: root.connected && !root.busy
     tooltipText: root.busy ? "X-VPN: " + root.statusTitle
       : root.connected
-        ? "X-VPN: " + (root.state.location || "Connected")
+        ? "X-VPN: " + Xvpn.safeTooltipText(root.state.location || "Connected")
         : "X-VPN: " + root.statusTitle
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.RightButton) {
@@ -873,7 +875,7 @@ Panel {
                       height: Style.space(30)
                       visible: !locationRow.current && (locationRow.hovered || locationRow.connecting)
                       text: locationRow.connecting ? "Connecting…" : "Connect"
-                      enabled: !locationRow.connecting
+                      enabled: !locationRow.connecting && Xvpn.validLocationKey(modelData.key)
                       selected: true
                       bordered: true
                       foreground: root.foreground
@@ -891,7 +893,7 @@ Panel {
                       anchors.fill: parent
                       visible: !locationRow.connecting && modelData.kind === "country" && modelData.expandable !== false
                       iconText: modelData.expanded ? "⌄" : "›"
-                      tooltipText: (modelData.expanded ? "Hide" : "Show") + " cities in " + modelData.label
+                      tooltipText: (modelData.expanded ? "Hide" : "Show") + " cities in " + Xvpn.safeTooltipText(modelData.label)
                       foreground: root.foreground
                       fontFamily: root.fontFamily
                       onClicked: root.toggleCountry(modelData)
@@ -902,7 +904,8 @@ Panel {
                   anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
                   anchors.right: parent.right
                   anchors.rightMargin: root.locationActionWidth + root.locationSideInset
-                  enabled: !locationRow.connecting
+                  enabled: !locationRow.connecting && (modelData.expandable !== false
+                    || Xvpn.validLocationKey(modelData.key))
                   hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                   onEntered: root.selectedIndex = index
                   onClicked: root.activateRow(modelData)

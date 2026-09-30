@@ -6,7 +6,7 @@ const vm = require("node:vm")
 const source = fs.readFileSync(path.join(__dirname, "../model/Xvpn.js"), "utf8")
   .replace(/^\.pragma library\s*/, "")
 const Xvpn = {}
-vm.runInNewContext(source + "\nthis.exports = { clean, parseStatus, parseLocations, filteredLocations, countryRows, countryLocations, accordionRows, parseProtocols, parsePublicIp, parseIpInfo, parseAccount, accountCommand }", Xvpn)
+vm.runInNewContext(source + "\nthis.exports = { clean, validLocationKey, safeTooltipText, parseStatus, parseLocations, filteredLocations, countryRows, countryLocations, accordionRows, parseProtocols, parsePublicIp, parseIpInfo, parseAccount, accountCommand }", Xvpn)
 const api = Xvpn.exports
 
 const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"))
@@ -27,10 +27,7 @@ assert.equal(api.parseStatus("flock: failed to execute xvpn: No such file or dir
 assert.equal(api.parseStatus("X-VPN is not installed", 1).available, false)
 assert.equal(api.parseStatus("ERROR: failed to find running daemon: daemon process not running", 1).available, true)
 assert.equal(api.parseStatus("Status: Disconnected", 0).connected, false)
-assert.equal(JSON.stringify(api.parseLocations("ID  Name\n1  Netherlands\n2  United States")), JSON.stringify([
-  { key: "1", label: "Netherlands", depth: 0, search: "1 netherlands" },
-  { key: "2", label: "United States", depth: 0, search: "2 united states" }
-]))
+assert.equal(api.parseLocations("ID  Name\n1  Netherlands\n2  United States").length, 0)
 assert.equal(JSON.stringify(api.parseLocations(`
 Current selected location: The Fastest Server
 ==================================================
@@ -45,7 +42,17 @@ Location                                Code
   { key: "013fa8f", label: "Los Angeles", depth: 2, search: "013fa8f los angeles" },
   { key: "1749f60", label: "Netherlands", depth: 0, search: "1749f60 netherlands" }
 ]))
-assert.equal(api.filteredLocations(api.parseLocations("nl  Netherlands\nus  United States"), "state")[0].key, "us")
+assert.equal(api.filteredLocations(api.parseLocations("├── Netherlands ··· 1749f60\n└── United States ··· b093442"), "state")[0].key, "b093442")
+for (const key of ["-p", "--fastest", "a b c d", "a0e0db6;", "deadbee\n--help", "us", "12345678", ""]) {
+  assert.equal(api.validLocationKey(key), false, key)
+}
+assert.equal(api.validLocationKey("013fa8f"), true)
+assert.equal(api.validLocationKey("B093442"), true)
+assert.equal(api.parseLocations("--help\n-p  malicious\n├── Unsafe ··· --help\n├── Safe ··· b093442").length, 1)
+assert.equal(api.safeTooltipText('<img src="https://example.com/x"> & hello'), '‹img src="https://example.com/x"› ＆ hello')
+assert.match(panel, /enabled: !locationRow\.connecting && Xvpn\.validLocationKey\(modelData\.key\)/)
+assert.match(panel, /!Xvpn\.validLocationKey\(row\.key\)/)
+assert.match(panel, /Xvpn\.safeTooltipText\(modelData\.label\)/)
 assert.equal(api.filteredLocations([{ label: "United States", search: "united states us" }], "us").length, 1)
 assert.equal(api.filteredLocations([{ label: "Netherlands", search: "netherlands nl" }], "ntherland").length, 1)
 assert.equal(api.parsePublicIp("1.2.3.4\n"), "1.2.3.4")
@@ -177,6 +184,11 @@ else process.stdout.write("Status: Disconnected\\n")
     const normal = cp.spawnSync("python3", [guard, "status"], { env, encoding: "utf8", timeout: 5000 })
     assert.equal(normal.status, 0, normal.stderr)
     assert.equal(normal.stdout, "Status: Disconnected\n")
+    for (const badKey of ["--help", "-p", "unsafe location", "deadbee;", "12345678"]) {
+      const rejected = cp.spawnSync("python3", [guard, "connect", badKey], { env, encoding: "utf8", timeout: 5000 })
+      assert.equal(rejected.status, 64, badKey)
+      assert.match(rejected.stderr, /Invalid X-VPN location code/)
+    }
     const large = cp.spawnSync("python3", [guard, "status"], {
       env: { ...env, MODE: "large" }, encoding: "utf8", timeout: 5000
     })
@@ -203,7 +215,7 @@ async function testConnectCancellation() {
   try {
     fs.writeFileSync(path.join(dir, "xvpn"),
       '#!/usr/bin/env node\nprocess.stdout.write("READY\\n")\nsetInterval(() => {}, 1000)\n', { mode: 0o755 })
-    const child = cp.spawn("python3", [guard, "connect", "fake"], {
+    const child = cp.spawn("python3", [guard, "connect", "b093442"], {
       env: { ...process.env, PATH: dir + path.delimiter + process.env.PATH, XDG_RUNTIME_DIR: dir },
       stdio: ["ignore", "pipe", "pipe"]
     })

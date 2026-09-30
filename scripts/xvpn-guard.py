@@ -2,6 +2,7 @@
 """Bound X-VPN CLI output and runtime before Quickshell collects it."""
 
 import os
+import re
 import selectors
 import signal
 import subprocess
@@ -47,6 +48,11 @@ def main(args):
         len(args) != 3 or args[1] != "--set"
     ):
         print("Unsupported X-VPN protocol command", file=sys.stderr)
+        return 64
+    if args[0] == "connect" and args[1:] != ["--fastest"] and (
+        len(args) != 2 or re.fullmatch(r"[a-fA-F0-9]{7}", args[1]) is None
+    ):
+        print("Invalid X-VPN location code", file=sys.stderr)
         return 64
 
     max_bytes, deadline_seconds = LIMITS[args[0]]
